@@ -86,7 +86,7 @@ ae_kqueue.o: ae_kqueue.c
 ae_select.o: ae_select.c
 anet.o: anet.c fmacros.h anet.h
 aof.o: aof.c redis.h fmacros.h config.h ae.h sds.h dict.h adlist.h \
-  zmalloc.h anet.h zipmap.h ziplist.h intset.h version.h util.h
+  zmalloc.h anet.h zipmap.h ziplist.h intset.h version.h util.h bio.h
 bio.o: bio.c redis.h fmacros.h config.h ae.h sds.h dict.h adlist.h \
   zmalloc.h anet.h zipmap.h ziplist.h intset.h version.h util.h bio.h
 cluster.o: cluster.c redis.h fmacros.h config.h ae.h sds.h dict.h \

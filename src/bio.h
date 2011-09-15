@@ -7,4 +7,6 @@ time_t bioOlderJobOfType(int type);
 
 /* Background job opcodes */
 #define REDIS_BIO_CLOSE_FILE    0 /* Deferred close(2) syscall. */
-#define REDIS_BIO_NUM_OPS       1
+#define REDIS_BIO_AOF_WRITE     1 /* Deferred aof write. */
+#define REDIS_BIO_AOF_FSYNC     2 /* Deferred aof fsync. */
+#define REDIS_BIO_NUM_OPS       3

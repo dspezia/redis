@@ -65,13 +65,30 @@ void flushAppendOnlyFile(void) {
 
     if (sdslen(server.aofbuf) == 0) return;
 
+
     /* We want to perform a single write. This should be guaranteed atomic
      * at least if the filesystem we are writing is a real physical one.
      * While this will save us against the server being killed I don't think
      * there is much to do about the whole server stopping for power problems
      * or alike */
-    nwritten = write(server.appendfd,server.aofbuf,sdslen(server.aofbuf));
-    if (nwritten != (signed)sdslen(server.aofbuf)) {
+
+    /* Note that we use a background job to write on disk for fsync
+     * everysecond, to avoid blocking in case of fsync() big latency
+     * issues. */
+    if (server.appendfsync == APPENDFSYNC_EVERYSEC) {
+        nwritten = (signed)sdslen(server.aofbuf);
+        bioCreateBackgroundJob(REDIS_BIO_AOF_WRITE,
+            (void*)(long)server.appendfd,
+            server.aofbuf,NULL);
+        server.aofbuf = sdsempty(); /* Make sure that no one will touch
+                                       this buffer that is now under the
+                                       control of the background thread. */
+    } else {
+        nwritten = write(server.appendfd,server.aofbuf,sdslen(server.aofbuf));
+    }
+    if (server.appendfsync != APPENDFSYNC_EVERYSEC &&
+        nwritten != (signed)sdslen(server.aofbuf))
+    {
         /* Ooops, we are in troubles. The best thing to do for now is
          * aborting instead of giving the illusion that everything is
          * working as expected. */
@@ -100,13 +117,21 @@ void flushAppendOnlyFile(void) {
             return;
 
     /* Perform the fsync if needed. */
-    if (server.appendfsync == APPENDFSYNC_ALWAYS ||
-        (server.appendfsync == APPENDFSYNC_EVERYSEC &&
-         server.unixtime > server.lastfsync))
+    if (server.appendfsync == APPENDFSYNC_ALWAYS) {
+        aof_fsync(server.appendfd);
+        server.lastfsync = server.unixtime;
+    } else if (server.appendfsync == APPENDFSYNC_EVERYSEC &&
+        server.unixtime > server.lastfsync)
     {
-        /* aof_fsync is defined as fdatasync() for Linux in order to avoid
-         * flushing metadata. */
-        aof_fsync(server.appendfd); /* Let's try to get this data on the disk */
+        if (bioPendingJobsOfType(REDIS_BIO_AOF_FSYNC) > 2) {
+            /* If we already have two fsync going on there is some
+             * disk slowdown. We need to block to resync with our
+             * background thread. */
+            bioWaitPendingJobsLE(REDIS_BIO_AOF_FSYNC,0);
+        }
+        bioCreateBackgroundJob(REDIS_BIO_AOF_FSYNC,
+                (void*)(long)server.appendfd,
+                NULL,NULL);
         server.lastfsync = server.unixtime;
     }
 }
@@ -677,6 +702,11 @@ void backgroundRewriteDoneHandler(int exitcode, int bysignal) {
 
         redisLog(REDIS_NOTICE,
             "Background AOF rewrite terminated with success");
+
+        /* If there are background operations going against the AOF
+         * we need to wait the completion. */
+        bioWaitPendingJobsLE(REDIS_BIO_AOF_WRITE,0);
+        bioWaitPendingJobsLE(REDIS_BIO_AOF_FSYNC,0);
 
         /* Flush the differences accumulated by the parent to the
          * rewritten AOF. */

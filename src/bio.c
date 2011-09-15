@@ -20,6 +20,10 @@
  * Every thread wait for new jobs in its queue, and process every job
  * sequentially.
  *
+ * Jobs of the same type are guaranteed to be processed from the least
+ * recently inserted to the most recently inserted (older jobs processed
+ * first).
+ *
  * Currently there is no way for the creator of the job to be notified about
  * the completion of the operation, this will only be added when/if needed.
  */
@@ -124,7 +128,21 @@ void *bioProcessBackgroundJobs(void *arg) {
 
         /* Process the job accordingly to its type. */
         if (type == REDIS_BIO_CLOSE_FILE) {
-            close((long)job->arg1);
+            int fd = (long)job->arg1;
+            close(fd);
+        } else if (type == REDIS_BIO_AOF_WRITE) {
+            int fd = (long)job->arg1;
+            sds buf = (sds)job->arg2;
+            size_t buflen = sdslen(buf);
+
+            if (write(fd,buf,buflen) != (ssize_t)buflen) {
+                redisLog(REDIS_WARNING,"FATAL: Background write(2) failed: %s",
+                    strerror(errno));
+                exit(1);
+            }
+        } else if (type == REDIS_BIO_AOF_FSYNC) {
+            int fd = (long)job->arg1;
+            aof_fsync(fd);
         } else {
             redisPanic("Wrong job type in bioProcessBackgroundJobs().");
         }
@@ -184,6 +202,10 @@ time_t bioOlderJobOfType(int type) {
 
     pthread_mutex_lock(&bio_mutex[type]);
     ln = listFirst(bio_jobs[type]);
+    if (ln == NULL) {
+        pthread_mutex_unlock(&bio_mutex[type]);
+        return 0;
+    }
     job = ln->value;
     time = job->time;
     pthread_mutex_unlock(&bio_mutex[type]);

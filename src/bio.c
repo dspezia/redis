@@ -140,6 +140,7 @@ void *bioProcessBackgroundJobs(void *arg) {
                     strerror(errno));
                 exit(1);
             }
+            sdsfree(buf);
         } else if (type == REDIS_BIO_AOF_FSYNC) {
             int fd = (long)job->arg1;
             aof_fsync(fd);
